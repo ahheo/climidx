@@ -1,0 +1,1019 @@
+#!/usr/bin/env python3
+
+"""
+>--#¤&#¤%/%&(¤%¤#%"¤#"#¤%&¤#!"#%#%&()/=?=()/&%¤%&/()/£$€¥{[}]()=?=)(/&¤%&/()--<
+>--------------------------Heat Wave Magnitude Index---application interface--<
+>--#¤&&()/=?=()/&#¤%&/(=)(/&$€¥{[]}]\±$¡$£€@"#%¤#¤&/("#¤!&/(%&"#¤"¤%&#%/)/*#--<
+* hwmi_obs_         : hwmi for observational data
+* hwmi_cmip5_       : hwmi for cmip5 data
+* hwmi_cordex_      : hwmi for cordex data
+* hwmi_other_       : hwmi for other data sets
+
+* main              : with controlfile
+                    : >>> cube >>> _
+
+###############################################################################
+            Author: Changgui Lin
+            E-mail: changgui.lin@smhi.se
+      Date created: 10.10.2019
+Date last modified: 15.05.2020
+"""
+
+
+import numpy as np
+import iris
+import os
+import warnings
+import logging
+import yaml
+import argparse
+from typing import Hashable
+
+from climi.uuuu import (isGI_, l__, ll_, ouniqL_, p_deoverlap_,                # ffff
+                        p_least_, pure_fn_, rPeriod_, schF_keys_, slctStrL_,   # ffff 
+                        timerMain_,                                            # ffff 
+                        concat_cube_, extract_season_cube, intersection_,      # cccc
+                        maskLS_cube, purefy_cubeL_, seasonyr_cube, yr_doy_cube # cccc
+                        )
+
+from climidx.hwmi_ import hwmi__
+from climidx.hwmid_ import hwmid__
+
+
+_here_ = os.path.dirname(__file__)
+
+_opj = os.path.join
+_isf = os.path.isfile
+
+
+def _bi_cmip5_info(root, o_o='list'):
+    if o_o == 'list':
+        o = []
+    elif o_o == 'dict':
+        o = {}
+    else:
+        raise Exception("output option unknown!"
+                        " Either 'list' (default) or 'dict' accepted!")
+    gcms = os.listdir(root)
+    for gg in gcms:
+        if not os.path.isdir(_opj(root, gg)):
+            continue
+        rcps = os.listdir(_opj(root, gg))
+        for rcp in rcps:
+            if not os.path.isdir(_opj(root, gg, rcp)):
+                continue
+            rips = os.listdir(_opj(root, gg, rcp))
+            for rip in rips:
+                if not os.path.isdir(_opj(root, gg, rcp, rip)):
+                    continue
+                if o_o == 'list':
+                    o.append(_opj(root, gg, rcp, rip, 'input'))
+                else:
+                    if gg not in o:
+                        o.update({gg: {rcp: {rip: _opj(
+                            root, gg, rcp, rip, 'input')}}})
+                    elif rcp not in o[gg]:
+                        o[gg].update({rcp: {rip: _opj(
+                            root, gg, rcp, rip, 'input')}})
+                    elif rip not in o[gg][rcp]:
+                        o[gg][rcp].update({rip: _opj(
+                            root, gg, rcp, rip, 'input')})
+    return o
+
+
+def _path2cmip5_info(fn):
+    terms = [i for i in fn.split('/') if i != '']
+    if terms[-1] in ['fx', 'fx_i', '1hr', '3hr', '6hr', 'day', 'mon', 'mon_i',
+                     'sem', 'sem_i']:
+        gcm, rcp, rip = terms[-5:-2]
+        freq = terms[-1]
+        return {'gcm': gcm, 'rcp': rcp, 'rip': rip, 'freq': freq}
+    else:
+        gcm, rcp, rip = terms[-4:-1]
+        return {'gcm': gcm, 'rcp': rcp, 'rip': rip}
+
+
+def _dictdict(cfg, fn_):
+    dd = {}
+    mdir = _opj(cfg['root'], cfg['experiment'], 'med')
+    rref = rPeriod_(cfg['p_']['ref'])
+    minL = cfg['minL'] if 'minL' in cfg else 3
+    pctl = cfg['thr_pctl'] if 'thr_pctl' in cfg else 90
+    fnthr = '{}.nc'.format('_'.join('thr', fn_, rref, pctl))
+    mtd = cfg['data4kde_mtd'] if 'data4kde_mtd' in cfg else 'ymax'
+    fnkde = '{}-{}.npz'.format('_'.join('kde', fn_, rref, pctl), mtd)
+    kdeo = cfg['kde_opts'] if 'kde_opts' in cfg else {}
+    mm = cfg['season'] if 'season' in cfg else 'j-d'
+    dd.update({'dict_p': cfg['p_'],
+               'mdir': mdir,
+               'rref': rref,
+               'minL': minL,
+               'pctl': pctl,
+               'fnthr': fnthr,
+               'dCube': (),
+               'rCube': (),
+               'pn': 'data',
+               'mm': mm})
+    if not cfg['_d']:
+        dd.update({'mtd': mtd,
+                   'fnkde': fnkde,
+                   'kdeo': kdeo})
+    return dd
+
+
+def _cmip5_dirs(cfg, gcm, rip):
+    try:
+        freq = cfg['f_opts']['freq']
+    except KeyError:
+        freq = 'day'
+    incl = [gcm, rip]
+    B_ = 'rdir0' in cfg and 'ddir0' in cfg
+    if B_:
+        cfg.update({'rdir': cfg['rdir0'], 'ddir': cfg['ddir0']})
+        return '_'.join([gcm, cfg['ehr'], rip])
+    else:
+        o0, o1 = _cmip5_dir(incl + [cfg['ehr']])
+        if o1:
+            o0 = _opj(o0, freq)
+            _o0 = _opj(_cmip5_dir(incl + ['rcp85'])[0], freq)
+            o0_ = _opj(_cmip5_dir(incl + ['historical'])[0], freq)
+            cfg.update({'rdir': [o0_, _o0]})
+            if 'periods' in cfg:
+                if cfg['ehr'][:3] == 'rcp':
+                    cfg.update({'ddir': [o0_, o0]})
+                else:
+                    cfg.update({'ddir': [o0, _o0]})
+            else:
+                cfg.update({'ddir': o0})
+            return o1
+
+
+def _cmip5_dir(incl, dL=None):
+    if dL is None:
+        dL = _bi_cmip5_info_('/home/rossby/imports/cmip5/')
+    out = slctStrL_(dL, incl=incl)
+    out.sort()
+    if len(out) == 0:
+        return (None, None)
+    else:
+        tmp = _path2cmip5_info(out[-1])
+        fn = '_'.join([tmp['gcm'], tmp['rcp'], tmp['rip']])
+        return (out[0], fn)
+
+
+def _cordex_dir_finfo(idir, var='*', dm='*', gcm='*', exp='*', rip='*',
+                      rcm='*', ver='*', freq='*', p=None, ext='.nc'):
+    """
+    Purpose: get data info from a cordex data directory
+    """
+    varL, dmL, gcmL, expL, ripL, rcmL, verL, freqL, pL = [[] for _ in range(9)]
+    s = '_'
+    if isinstance(idir, str):
+        idir = [idir]
+    files = []
+    for i in idir:
+        if p is None:
+            tmp = s.join([var, dm, gcm, exp, rip, rcm, ver, freq]) + '*' + ext
+        else:
+            tmp = s.join([var, dm, gcm, exp, rip, rcm, ver, freq, p]) + ext
+        files += glob.glob(_opj(i, tmp))
+    files.sort()
+    for f in files:
+        s_s = pure_fn_(f).split(s)
+        varL.append(s_s[0])
+        dmL.append(s_s[1])
+        gcmL.append(s_s[2])
+        expL.append(s_s[3])
+        ripL.append(s_s[4])
+        rcmL.append(s_s[5])
+        verL.append(s_s[6])
+        freqL.append(s_s[7])
+        if s_s[7].upper() != 'FX':
+            pL.append(s_s[8])
+    return {'var': ouniqL_(varL), 'dm': ouniqL_(dmL),
+            'gcm': ouniqL_(gcmL), 'exp': ouniqL_(expL),
+            'rip': ouniqL_(ripL), 'rcm': ouniqL_(rcmL),
+            'ver': ouniqL_(verL), 'freq': ouniqL_(freqL),
+            'p': ouniqL_(pL), 'fn': files}
+
+
+def _bi_cordex_info(root, o_o='list'):
+    if o_o == 'list':
+        o = []
+    elif o_o == 'dict':
+        o = {}
+    else:
+        raise Exception("output option unknown!"
+                        " Either 'list' (default) or 'dict' accepted!")
+    rcms = os.listdir(root)
+    for rr in rcms:
+        if not os.path.isdir(_opj(root, rr)):
+            continue
+        vers = os.listdir(_opj(root, rr))
+        for vv in vers:
+            if not os.path.isdir(_opj(root, rr, vv)):
+                continue
+            gcms = os.listdir(_opj(root, rr, vv))
+            for gg in gcms:
+                if not os.path.isdir(_opj(root, rr, vv, gg)):
+                    continue
+                rips = os.listdir(_opj(root, rr, vv, gg))
+                for rip in rips:
+                    if not os.path.isdir(_opj(root, rr, vv, gg, rip)):
+                        continue
+                    rcps = os.listdir(_opj(root, rr, vv, gg, rip))
+                    for rcp in rcps:
+                        if not os.path.isdir(_opj(root, rr, vv, gg, rip, rcp)):
+                            continue
+                        if o_o == 'list':
+                            o.append(_opj(root, rr, vv, gg, rip, rcp, 'input'))
+                        else:
+                            if rr not in o:
+                                o.update({rr: {vv: {gg: {rip: {rcp: _opj(
+                                    root, rr, vv, gg, rip, rcp, 'input')}}}}})
+                            elif vv not in o[rr]:
+                                o[rr].update({vv: {gg: {rip: {rcp: _opj(
+                                    root, rr, vv, gg, rip, rcp, 'input')}}}})
+                            elif gg not in o[rr][vv]:
+                                o[rr][vv].update({gg: {rip: {rcp: _opj(
+                                    root, rr, vv, gg, rip, rcp, 'input')}}})
+                            elif rip not in o[rr][vv][gg]:
+                                o[rr][vv][gg].update({rip: {rcp: _opj(
+                                    root, rr, vv, gg, rip, rcp, 'input')}})
+                            elif rcp not in o[rr][vv][gg][rip]:
+                                o[rr][vv][gg][rip].update({rcp: _opj(
+                                    root, rr, vv, gg, rip, rcp, 'input')})
+    return o
+
+
+def _path2cordex_info(fn):
+    terms = [i for i in fn.split('/') if i != '']
+    if terms[-1] in ['fx', 'fx_i', '1hr', '3hr', '6hr', 'day', 'mon', 'mon_i',
+                     'sem', 'sem_i']:
+        rcm, ver, gcm, rip, rcp = terms[-7:-2]
+        freq = terms[-1]
+        return {'rcm': rcm, 'ver': ver, 'gcm': gcm,
+                'rip': rip, 'rcp': rcp, 'freq': freq}
+    else:
+        rcm, ver, gcm, rip, rcp = terms[-6:-1]
+        return {'rcm': rcm, 'ver': ver, 'gcm': gcm,
+                'rip': rip, 'rcp': rcp}
+
+
+def _cordex_dirs(cfg, gcm, rcm, rip, dL=None, sY=None):
+    _dir, _dirA = (_smhi_dir, sY) if rcm == 'SMHI-RCA4' else (_imp_dir, dL)
+    try:
+        freq = cfg['f_opts']['freq']
+    except KeyError:
+        freq = 'day'
+    try:
+        ver = cfg['r_v'][rcm]
+    except KeyError:
+        ver = None
+    incl = [gcm, rip, rcm, ver] if ver else [gcm, rip, rcm]
+    B_ = 'rdir0' in cfg and 'ddir0' in cfg
+    if B_:
+        cfg.update({'rdir': cfg['rdir0'], 'ddir': cfg['ddir0']})
+        if ver is None:
+            try:
+                ver = _cordex_dir_finfo(cfg['rdir0'],
+                                        gcm=gcm, rcm=rcm)['ver'][-1]
+            except IndexError:
+                ver = 'v0'
+        return '_'.join([gcm, cfg['ehr'], rip, rcm, ver])
+    else:
+        o0, o1 = _dir(incl + [cfg['ehr']], _dirA)
+        if o1:
+            o0 = _opj(o0, freq)
+            if cfg['ehr'] == 'evaluation':
+                cfg.update({'rdir': o0, 'ddir': o0})
+            else:
+                _o0 = _opj(_dir(incl + ['rcp85'], _dirA)[0], freq)
+                o0_ = _opj(_dir(incl + ['historical'], _dirA)[0], freq)
+                cfg.update({'rdir': [o0_, _o0]})
+                if 'periods' in cfg:
+                    if cfg['ehr'][:3] == 'rcp':
+                        cfg.update({'ddir': [o0_, o0]})
+                    else:
+                        cfg.update({'ddir': [o0, _o0]})
+                else:
+                    cfg.update({'ddir': o0})
+            return o1
+
+
+def _imp_dir(incl, dL=None):
+    if dL is None:
+        dL = _bi_cordex_info('/home/rossby/imports/cordex/EUR-11/')
+    out = slctStrL_(dL, incl=incl)
+    out.sort()
+    if len(out) == 0:
+        return (None, None)
+    else:
+        tmp = _path2cordex_info(out[-1])
+        fn = '_'.join([tmp['gcm'], tmp['rcp'], tmp['rip'], tmp['rcm'],
+                       tmp['ver']])
+        return (out[-1], fn)
+
+
+def _smhi_dir(incl, sY=None):
+    if sY is None:
+        with open(_opj(_here_, 'eur-11_smhi-rca4.yml')) as yf:
+            sY = yaml.safe_load(yf)
+    out = [i for i in sY if isinstance(i, int) and
+           all([ii in sY[i].values() for ii in incl])]
+    if len(out) == 0:
+        return (None, None)
+    else:
+        tmp = sY[out[-1]]
+        fn = '_'.join([tmp['gcm'], tmp['rcp'], tmp['rip'], tmp['rcm'],
+                       tmp['ver']])
+        return (_opj(sY['root'], out[-1], 'netcdf'), fn)
+
+
+def _var(cfg, hORc):
+    try:
+        out = cfg['f_opts']['var'][0] + cfg['f_opts']['var'][-1]
+    except KeyError:
+        out = 'tn' if hORc == 'cold' else 'tx'
+    return out
+
+
+def _mk_odir(cfg):
+    if not cfg['_d']:
+        mtd = cfg['data4kde_mtd'] if 'data4kde_mtd' in cfg else 'ymax'
+        odir = _opj(cfg['root'], cfg['experiment'], 'res', cfg['proj'],         
+                    cfg['thr_pctl'], mtd)
+    else:
+        odir = _opj(cfg['root'], cfg['experiment'], 'res', cfg['proj'],
+                    cfg['thr_pctl'])
+    os.makedirs(odir, exist_ok=True)
+    return odir
+
+
+def _check_med_f(dd, _d=False):
+    if _d:
+        return False
+    else:
+        return _isf(_opj(dd['mdir'], dd['fnkde'])) and \
+               _isf(_opj(dd['mdir'], dd['fnthr']))
+
+
+def _inloop_func(hORc, dd, _d=False):
+    f__ = hwmid__ if _d else hwmi__
+    if hORc[:4] == 'heat':
+       return f__(**dd)
+    elif hORc[:4] == 'cold':
+       return f__(**dd, hw=False)
+
+
+def _tof(out, odir, fn__, hORc, _d=False, _sdi=True):
+    var_ = 'hwmi' if hORc[:4] == 'heat' else 'cwmi'
+    var_ += 'd' * _d
+    iris.save(out['hwmi'], _opj(odir, '-'.join(var_, fn__)))
+    if _sdi:
+        var_ = 'wsdi' if hORc[:4] == 'heat' else 'csdi'
+        iris.save(out['wsdi'], _opj(odir, '-'.join(var_, fn__)))
+
+
+def _frf(odir, fn__, hORc, _d=False, _sdi=True):
+    def _v_vd(v, vd):
+        v_ = v + 'd' * vd
+        fns = schF_keys_(odir, '{}-{}_'.format(v_, fn__))
+        if len(fns) > 2:
+            o0 = iris.load(fns)
+            if len(o0) > 2:
+                purefy_cubeL_(o0)
+                try:
+                    o0 = o0.merge_cube()
+                except:
+                    try:
+                        o0 = o0.concatenate_cube()
+                    except:
+                        ll_('merge_cube() or concatenate_cube() failure!')
+            else:
+                o0 = o0[0]
+            iris.save(o0, _opj(odir, '{}-{}.nc'.format(c_, fn__)))
+            for i in fns:
+                os.remove(i)
+    var_ = 'hwmi' if hORc[:4] == 'heat' else 'cwmi'
+    _v_vd(var_, _d)
+    if _sdi:
+        var_ = 'wsdi' if hORc[:4] == 'heat' else 'csdi'
+        _v_vd(var_, False)
+
+
+def _k_get(cfg, hORc):
+    kGet = {'season': cfg['season']} if 'season' in cfg else {}
+    kGet.update({'hORc': hORc})
+    return kGet
+
+
+def _get_cube_obs(idir, dn, rn, dict_rg, *fn, season=None, hORc='heat',
+                  keys=[]):
+    from iris.experimental.equalise_cubes import equalise_attributes
+
+    warnings.filterwarnings("ignore",
+                            message="Missing CF-netCDF measure variable")
+
+    t0 = l__('loading {}'.format(dn))
+    if len(fn) != 0:
+        intersect_it = any([rn not in i for i in fn])
+        fn = [_opj(idir, i) for i in fn]
+    else:
+        fn = schF_keys_(idir, dn, rn, *keys)
+        intersect_it = False
+        if len(fn) == 0:
+            fn = schF_keys_(idir, dn, *keys)
+            if len(fn) == 0:
+                raise Exception("fail to find data at {!r}".format(idir))
+            intersect_it = True
+
+    if len(fn) > 1:
+        tmp = iris.load(fn)
+        equalise_attributes(tmp)
+        cube = tmp.concatenate_cube()
+    else:
+        cube = iris.load_cube(fn[0])
+
+    tmp = schF_keys_(idir, dn, 'sftlf')
+    if len(tmp) != 0:
+        sftlf = iris.load_cube(tmp[0])
+        maskLS_cube(cube, sftlf, thr=50)
+        ll_('masking data {}'.format(dn))
+
+    intersect_it &= (rn.upper() not in ('GLOBAL', 'ALL') and rn in dict_rg)
+
+    if intersect_it:
+        cube = intersection_(cube, **dict_rg[rn])
+    if season:
+        cube = extract_season_cube(cube, season)
+        seasonyr_cube(cube, season)
+    elif hORc[:4] == 'cold':
+        seasonyr_cube(cube, 'jasondj')
+
+    yr_doy_cube(cube)
+    yr_0 = cube.coord('year').points if season is None \
+           and hORc[:4] == 'heat' else cube.coord('seasonyr').points
+    doy_0 = cube.coord('doy').points
+    ax_t = cube.coord_dims('time')[0]
+    ll_('loading {}'.format(dn), t0)
+
+    return (cube, yr_0, doy_0, ax_t)
+
+
+def hwmi_obs_(cfg):
+    """
+    Purpose: hwmi for observational data
+    """
+    odir = _mk_odir(cfg)
+    hORc = cfg['hORc'] if 'hORc' in cfg else 'heat'
+    _d = cfg['_d'] if '_d' in cfg else False
+    var = _var(cfg, hORc)
+    for dn in cfg['datasets']:
+        ll_(' >>>>>>> {}'.format(dn))
+        for rn in cfg['regions']:
+            fn_ = '_'.join((var, dn, rn))
+            dd = _dictdict(cfg, fn_)
+            #file name(s)
+            if 'ifn' in cfg:
+                if isinstance(cfg['ifn'][dn], Hashable):
+                    fnL = {cfg['ifn'][dn]}
+                else:
+                    fnL = set(cfg['ifn'][dn])
+            else:
+                fnL = ()
+            #taking care of season
+            kGet = _k_get(cfg, hORc)
+            kGet_ = dict(keys=cfg['f_opts'].values()) if 'f_opts' in cfg\
+                    else dict()
+            #reading dCube
+            try:
+                dCube = _get_cube_obs(cfg['idir'], dn, rn, cfg['sub_r'],
+                                      *fnL, **kGet, **kGet_)
+            except:
+                continue
+            #reading rCube
+            if _check_med_f(dd, _d):
+                rCube = ()
+            else:
+                rCube = _get_cube_obs(cfg['idir'], dn, rn, cfg['sub_r'],
+                                      *fnL, **kGet_)
+            #updating dd
+            dd.update({'dCube': dCube, 'rCube': rCube})
+            #preparing output names
+            fn__ = '{}_ref{}-{}_{}'.format(
+                    fn_,
+                    *cfg['p_']['ref'],
+                    cfg['season'] if 'season' in cfg else 'j-d')
+            if 'periods' in cfg:
+                for pn in cfg['periods']:
+                    dd.update({'pn': pn})
+                    out = _inloop_func(hORc, dd, _d)
+                    _tof(out, odir, '{}_{}-{}'.format(fn__, *cfg['p_'][pn]),
+                         hORc, _d, cfg['_sdi'])
+            else:
+                out = _inloop_func(hORc, dd, _d)
+                _tof(out, odir, fn__, hORc, _d, cfg['_sdi'])
+        ll_(' {} <<<<<<<'.format(dn))
+
+
+def _get_cube_m(cube0, rn, dict_rg, *sftlf, season=None, hORc='heat'):
+    t0 = l__('precube')
+    intersect_it = False if rn.upper() in ['GLOBAL', 'ALL'] \
+                   or rn not in dict_rg else True
+    if intersect_it:
+        cube = intersection_(cube0, **dict_rg[rn])
+    else:
+        cube = cube0.copy()
+
+    if season is not None:
+        cube = extract_season_cube(cube, season)
+        seasonyr_cube(cube, season)
+    elif hORc[:4] == 'cold':
+        seasonyr_cube(cube, 'jasondj')
+
+    if len(sftlf) != 0:
+        maskLS_cube(cube, sftlf[0], thr=50)
+    yr_doy_cube(cube)
+    yr_0 = cube.coord('year').points if season is None \
+           and hORc[:4] == 'heat' else cube.coord('seasonyr').points
+    doy_0 = cube.coord('doy').points
+    ax_t = cube.coord_dims('time')[0]
+    ll_('precube', t0)
+
+    return (cube, yr_0, doy_0, ax_t)
+
+
+def _min_fselect_(dir_finfo, period=None):
+    """
+    Purpose: select fewest files from finfo of a cmip5/cordex data directory
+    """
+    pp = p_deoverlap_(p_least_(dir_finfo['p'], *period) if period else
+                      dir_finfo['p'])
+    fn = [f for f in dir_finfo['fn'] if any(i in f for i in pp)]
+    dir_finfo.update({'p': pp, 'fn': fn})
+
+
+def _cmip5_dir_finfo(idir, var='*', freq='*', gcm='*', exp='*', rip='*',
+                     p=None, ext='.nc'):
+    """
+    Purpose: get data info from a cmip5 data directory
+    """
+    varL, freqL, gcmL, expL, ripL, pL = [[] for _ in range(6)]
+    s = '_'
+    if isinstance(idir, str):
+        idir = [idir]
+    files = []
+    for i in idir:
+        if p is None:
+            tmp = s.join([var, freq, gcm, exp, rip]) + '*' + ext
+        else:
+            tmp = s.join([var, freq, gcm, exp, rip, p]) + ext
+        files += glob.glob(_djn(i, tmp))
+    files.sort()
+    for f in files:
+        s_s = pure_fn_(f).split(s)
+        varL.append(s_s[0])
+        freqL.append(s_s[1])
+        gcmL.append(s_s[2])
+        expL.append(s_s[3])
+        ripL.append(s_s[4])
+        if s_s[1].upper() != 'FX':
+            pL.append(s_s[5])
+    return {'var': ouniqL_(varL), 'freq': ouniqL_(freqL),
+            'gcm': ouniqL_(gcmL), 'exp': ouniqL_(expL),
+            'rip': ouniqL_(ripL), 'p': ouniqL_(pL),
+            'fn': files}
+
+
+def _cmip5_dir_cubeL(idir, var='*', freq='*', gcm='*', exp='*', rip='*',
+                     p='*', ext='.nc', period=None, ifconcat=False):
+    """
+    Purpose: load cube list from a cmip5 data directory
+    """
+    #warnings.filterwarnings("ignore", category=UserWarning)
+    info = _cmip5_dir_finfo(idir, var=var, freq=freq, gcm=gcm, exp=exp,
+                           rip=rip, p=p, ext=ext)
+    if (len(info['gcm']) * len(info['var']) * len(info['freq'])
+        * len(info['rip'])) > 1 and ifconcat:
+        raise Exception("no idea how to organize kArgs!")
+    _min_fselect_(info, period)
+    cubeL = iris.load(info['fn'])
+    if var != '*':
+        varCstr_ = iris.Constraint(cube_func=lambda c: c.var_name == var)
+        cubeL = cubeL.extract(varCstr_)
+    if len(cubeL) == 0:
+        return None
+    elif ifconcat:
+        try:
+            cube = concat_cube_(cubeL, atol=1e-5)
+            p = sorted(info['p'])
+            return {'cube': cube,
+                    'p': '-'.join((p[0].split('-')[0], p[-1].split('-')[-1]))}
+        except:
+            ll_('bbbb: cmip5_dir_cubeL: concat_cube_ error,'
+                ' return None instead')
+            return {'cube': None,
+                    'p': '-'.join((p[0].split('-')[0], p[-1].split('-')[-1]))}
+    else:
+        return {'cube': cubeL, 'p': info['p']}
+
+
+def _cordex_dir_cubeL(idir, var='*', dm='*', gcm='*', exp='*', rcm='*',
+                      freq='*', ver='*', rip='*', p='*', ext='.nc',
+                      period=None, ifconcat=False):
+    """
+    Purpose: load cube list from a cordex data directory
+    """
+    #warnings.filterwarnings("ignore", category=UserWarning)
+    info = _cordex_dir_finfo(idir, var=var, dm=dm, gcm=gcm, exp=exp,
+                             rip=rip, rcm=rcm, p=p, ext=ext)
+    if ((len(info['dm']) * len(info['gcm']) * len(info['var'])
+         * len(info['rcm']) * len(info['freq']) * len(info['rip'])) > 1
+        and ifconcat):
+        raise Exception("no idea how to organize kArgs!")
+    _min_fselect_(info, period)
+    cubeL = iris.load(info['fn'])
+    if var != '*':
+        varCstr_ = iris.Constraint(cube_func=lambda c: c.var_name == var)
+        cubeL = cubeL.extract(varCstr_)
+    if len(cubeL) == 0:
+        return None
+    elif ifconcat:
+        try:
+            cube = concat_cube_(cubeL)
+            p = sorted(info['p'])
+            return {'cube': cube,
+                    'p': '-'.join((p[0].split('-')[0], p[-1].split('-')[-1]))}
+        except:
+            ll_('bbbb: cordex_dir_cubeL : concat_cube_ error,'
+                ' return None instead')
+            return {'cube': None,
+                    'p': '-'.join((p[0].split('-')[0], p[-1].split('-')[-1]))}
+    else:
+        return {'cube': cubeL, 'p': info['p']}
+
+def _dir_cubeL(mm, *Args, **kArgs):
+    """
+    Purpose: select function to load model data
+    """
+    if mm[:5] == 'cmip5':
+       return _cmip5_dir_cubeL(*Args, **kArgs)
+    elif mm[:6] == 'cordex':
+       return _cordex_dir_cubeL(*Args, **kArgs)
+    else:
+       raise Exception('unknown dataset name!')
+
+
+def _get_cube0_m(cfg, mdict):
+    """
+    Purpose: load model data
+    """
+    t0 = l__('loading cube0')
+    if 'periods' in cfg:
+        if cfg['rdir'] == cfg['ddir']:
+            p0 = min(flt_l(cfg['p_'].values()))
+            p1 = max(flt_l(cfg['p_'].values()))
+            tmp = _dir_cubeL(cfg['proj'], cfg['ddir'], **cfg['f_opts'],
+                             **mdict, period=[p0, p1], ifconcat=True)
+            dcube0 = tmp['cube'] if tmp else None
+            rcube0 = dcube0
+        else:
+            tmp = _dir_cubeL(cfg['proj'], cfg['rdir'], **cfg['f_opts'],
+                             **mdict, period=cfg['p_']['ref'], ifconcat=True)
+            rcube0 = tmp['cube'] if tmp else None
+            pL = [cfg['p_'][i] for i in cfg['periods']]
+            p0 = min(flt_l(pL))
+            p1 = max(flt_l(pL))
+            tmp = _dir_cubeL(cfg['proj'], cfg['ddir'], **cfg['f_opts'],
+                             **mdict, period=[p0, p1], ifconcat=True)
+            dcube0 = tmp['cube'] if tmp else None
+    else:
+        tmp = _dir_cubeL(cfg['proj'], cfg['rdir'], **cfg['f_opts'], **mdict,
+                         period=cfg['p_']['ref'], ifconcat=True)
+        rcube0 = tmp['cube'] if tmp else None
+        tmp = _dir_cubeL(cfg['proj'], cfg['ddir'], **cfg['f_opts'], **mdict,
+                         ifconcat=True)
+        dcube0 = tmp['cube'] if tmp else None
+    ll_('loading cube0', t0)
+    return (rcube0, dcube0)
+
+
+def _rm_ehr(fn):
+    import re
+    ss = re.findall('evaluation_|historical_|rcp\d{2}_', fn)
+    for i in ss:
+        fn = fn.replace(i, '')
+    return fn
+
+
+def _inloop_rg_hwmi_m(cfg, hORc, rcube0, dcube0, rn, odir, fn_, _d, *sftlf):
+    """
+    Purpose: in loop region-loop calculate and save results
+    """
+    kGet = _k_get(cfg, hORc)
+    fn__ = '{}_ref{}-{}_{}'.format(fn_, *cfg['p_']['ref'],
+                                   cfg['season'] if 'season' in cfg else 'j-d')
+    t0 = l__(fn__)
+    dd = _dictdict(cfg, _rm_ehr(fn_))
+    if _check_med_f(dd, _d):
+        rCube = ()
+    else:
+        rCube = _get_cube_m(rcube0, rn, cfg['sub_r'], *sftlf)
+    dd.update({'rCube': rCube})
+    if 'periods' in cfg:
+        dCube = _get_cube_m(dcube0, rn, cfg['sub_r'], *sftlf, **kGet)
+        dd.update({'dCube': dCube})
+        for pn in cfg['periods']:
+            dd.update({'pn': pn})
+            out = _inloop_func(hORc, dd, _d)
+            _tof(out, odir, '_'.join((fn__, rPeriod_(cfg['p_'][pn]))),
+                 hORc, _d, cfg['_sdi'])
+    elif isinstance(dcube0, iris.cube.Cube):
+        dCube = _get_cube_m(dcube0, rn, cfg['sub_r'], *sftlf, **kGet)
+        dd.update({'dCube': dCube})
+        out = _inloop_func(hORc, dd, _d)
+        _tof(out, odir, fn__, hORc, _d, cfg['_sdi'])
+    else:
+        c_h = []
+        c_w = []
+        for i, cc in enumerate(dcube0):
+            t00 = l__(prg_(i, len(dcube0)))
+            dCube = _get_cube_m(cc, rn, cfg['sub_r'], *sftlf, **kGet)
+            dd.update({'dCube': dCube})
+            tmp = _inloop_func(hORc, dd, _d)
+            c_h.append(tmp['hwmi'])
+            c_w.append(tmp['wsdi'])
+            ll_(prg_(i, len(dcube0)), t00)
+        c_h = iris.cube.CubeList(c_h)
+        c_h = concat_cube_(c_h)
+        c_w = iris.cube.CubeList(c_w)
+        c_w = concat_cube_(c_w)
+        out = {'hwmi': c_h, 'wsdi': c_w}
+        _tof(out, odir, fn__, hORc, _d, cfg['_sdi'])
+    ll_(fn__, t0)
+
+def hwmi_cmip5_(cfg):
+    """
+    Purpose: hwmi for cmip5 data
+    """
+    odir = _mk_odir(cfg)
+    hORc = cfg['hORc'] if 'hORc' in cfg else 'heat'
+    _d = cfg['_d'] if '_d' in cfg else False
+    var = _var(cfg, hORc)
+    warnings.filterwarnings("ignore", message="Missing CF-netCDF ")
+    for gcm in cfg['gcms']:
+        try:
+            rips = cfg['rip'][gcm]
+        except KeyError:
+            rips = ['r1i1p1']
+        rips = [rips] if isinstance(rips, str) else rips
+        for rip in rips:
+            ll_(' >>>>>>> {}_{}'.format(gcm, rip))
+            fn0 = _cmip5_dirs(cfg, gcm, rip)
+            if fn0 is None:
+                ll_('XXX {}_{}'.format(gcm, rip))
+                continue
+            rcube0, dcube0 = _get_cube0_m(cfg, dict(gcm=gcm, rip=rip))
+            if rcube0 is None or dcube0 is None:
+                ll_('XXX {}_{}'.format(gcm, rip))
+                continue
+            if isinstance(dcube0, iris.cube.CubeList):
+                if len(dcube0) == 0:
+                    ll_('XXX {}_{}'.format(gcm, rip))
+                    continue
+            linfo = _cmip5_dir_finfo(cfg['ldir'], var='sftlf', gcm=gcm)
+            if len(linfo['fn']) != 0:
+                sftlf = (iris.load_cube(linfo['fn'][0]),)
+            else:
+                sftlf = ()
+            for rn in cfg['regions']:
+                fn_ =  '_'.join((var, fn0, rn))
+                _inloop_rg_hwmi_m(cfg, hORc, rcube0, dcube0, rn, odir, fn_,
+                                  _d, *sftlf)
+            ll_(' {}_{} <<<<<<<'.format(gcm, rip))
+
+
+def hwmi_cordex_(cfg):
+    """
+    Purpose: hwmi for cordex data
+    """
+    odir = _mk_odir(cfg)
+    hORc = cfg['hORc'] if 'hORc' in cfg else 'heat'
+    pathL = cfg['pathL'] if 'pathL' in cfg else None
+    sYML = cfg['sYML'] if 'sYML' in cfg else None
+    _d = cfg['_d'] if '_d' in cfg else False
+    var = _var(cfg, hORc)
+    warnings.filterwarnings("ignore", message="Missing CF-netCDF ")
+    for rcm in cfg['rcms']:
+        t0_ = l__(' >>>>>>>>> {}'.format(rcm))
+        for gcm in cfg['gcms']:
+            t0__ = l__(' >>>>>>> {}'.format(gcm))
+            try:
+                rips = cfg['rip'][gcm]
+            except KeyError:
+                rips = ['r1i1p1']
+            rips = [rips] if isinstance(rips, str) else rips
+            for rip in rips:
+                t0___ = l__(' >>>>> {}'.format(rip))
+                fn0 = _cordex_dirs(cfg, gcm, rcm, rip, dL=pathL, sY=sYML)
+                if fn0 is None:
+                    ll_('XXX {}_{}_{}'.format(gcm, rip, rcm))
+                    continue
+                rcube0, dcube0 = _get_cube0_m(cfg, dict(gcm=gcm, rcm=rcm,
+                                                        rip=rip))
+                if rcube0 is None or dcube0 is None:
+                    ll_('XXX {}_{}'.format(gcm, rip))
+                    continue
+                if isinstance(dcube0, iris.cube.CubeList):
+                    if len(dcube0) == 0:
+                        ll_('XXX {}_{}_{}'.format(gcm, rip, rcm))
+                        continue
+                linfo = _cordex_dir_finfo(cfg['ldir'], var='sftlf', rcm=rcm)
+                if len(linfo['fn']) != 0:
+                    sftlf = (iris.load_cube(linfo['fn'][0]),)
+                else:
+                    sftlf = ()
+                for rn in cfg['regions']:
+                    fn_ =  '_'.join((var, fn0, rn))
+                    _inloop_rg_hwmi_m(cfg, hORc, rcube0, dcube0, rn, odir,
+                                      fn_, _d, *sftlf)
+                ll_(' {} <<<<<'.format(rip), t0___)
+            ll_(' {} <<<<<<<'.format(gcm), t0__)
+        ll_(' {} <<<<<<<<<'.format(rcm), t0_)
+
+
+def _realzL(cube):
+    if 'realization' in [i.name() for i in cube.dim_coords]:
+        return cube.slices_over('realization')
+        #nr = cube.shape[cube.coord_dims('realization')[0]]
+        #return [extract_byAxes_(cube,'realization', i)
+        #        for i in range(nr)]
+    else:
+        return cube
+
+
+def _get_cube0_o(cfg, dn):
+    """
+    Purpose: load 'other' data
+    """
+    warnings.filterwarnings("ignore", message="Missing CF-netCDF ")
+
+    logging.debug('_get_cube0_o')
+    t0 = l__('loading cube0')
+    keys = (cfg['f_opts']['var'] + '_',)\
+           if 'f_opts' in cfg and 'var' in cfg['f_opts'] else\
+           (('tasmin_',) if cfg['hORc'] == 'cold' else ('tasmax_'))
+    fnL = schF_keys_(_opj(cfg['idir'], dn), *keys, ext='.nc')
+    o = iris.load(fnL, 'air_temperature')
+    out0 = _realzL(o[0]) if len(o) == 1 else\
+           (iris.load_cube(i, 'air_temperature') for i in fnL)
+
+    if len(fnL) > 1:
+        out2 = [pure_fn_(i) for i in fnL]
+    else:
+        out2 = None
+
+    tmp = schF_keys_(_opj(cfg['idir'], dn), 'sftlf')
+    if len(tmp) != 0:
+        out1 = (iris.load_cube(tmp[0]),)
+    else:
+        out1 = ()
+
+    ll_('loading cube0')
+
+    return (out0, out1, out2)
+
+
+def _cubeORcubeL_hwmi(cfg, odir, hORc, o0, rn, fn_, _d, pn='data'):
+    from iris.experimental.equalise_cubes import equalise_attributes
+    kGet = _k_get(cfg, hORc)
+    fn__ = '{}_ref{}-{}_{}'.format(fn_, *cfg['p_']['ref'],
+                                   cfg['season'] if 'season' in cfg else 'j-d')
+    if pn != 'data':
+        fn__ += '_{}-{}'.format(*cfg['p_'][pn])
+    t0 = l__(fn__)
+    if isinstance(o0[0], iris.cube.Cube):
+        dd = _dictdict(cfg, fn_)
+        if _check_med_f(dd, _d):
+            rCube = ()
+        else:
+            rCube = _get_cube_m(o0[0], rn, cfg['sub_r'], *o0[1])
+        dCube = _get_cube_m(o0[0], rn, cfg['sub_r'], *o0[1], **kGet)
+        dd.update({'dCube': dCube, 'rCube': rCube, 'pn': pn})
+        out = _inloop_func(hORc, dd, _d)
+        _tof(out, odir, fn__, hORc, _d, cfg['_sdi'])
+    else:
+        for i, cc in enumerate(o0[0]):
+            if 'ii' in cfg and i < cfg['ii']:#QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ
+                continue
+            t00 = l__(prg_(i, None if isGI_(o0[0]) else len(o0[0])))
+            o02 = o0[2][i] if o0[2] else '{}'.format(i)
+            dd = _dictdict(cfg, '_'.join((fn_, o02)))
+            if _check_med_f(dd, _d):
+                rCube = ()
+            else:
+                rCube = _get_cube_m(cc.copy(), rn, cfg['sub_r'], *o0[1])
+            dCube = _get_cube_m(cc.copy(), rn, cfg['sub_r'], *o0[1], **kGet)
+            dd.update({'dCube': dCube, 'rCube': rCube, 'pn': pn})
+            tmp = _inloop_func(hORc, dd, _d)
+            _tof(tmp, odir, '_'.join((fn__, o02)), hORc, _d, cfg['_sdi'])
+            ll_(prg_(i, None if isGI_(o0[0]) else len(o0[0])), t00)
+        _frf(odir, fn__, hORc, _d, cfg['_sdi'])
+    ll_(fn__)
+
+
+def hwmi_other_(cfg):
+    """
+    Purpose: hwmi for cordex data
+    """
+    odir = _mk_odir(cfg)
+    hORc = cfg['hORc'] if 'hORc' in cfg else 'heat'
+    _d = cfg['_d'] if '_d' in cfg else False
+    var = _var(cfg, hORc)
+    for dn in cfg['datasets']:
+        ll_(' >>>>>>> {}'.format(dn))
+        o0 = _get_cube0_o(cfg, dn)
+        if o0[0] is None:
+            continue
+        for rn in cfg['regions']:
+            fn_ = '_'.join((var, dn, rn))
+            if 'periods' in cfg:
+                if isGI_(o0[0]) and len(cfg['periods']) > 1:
+                    o0 = (list(o0[0]), *o0[1:])
+                for pn in cfg['periods']:
+                    _cubeORcubeL_hwmi(cfg, odir, hORc, o0, rn, fn_, _d, pn=pn)
+            else:
+                _cubeORcubeL_hwmi(cfg, odir, hORc, o0, rn, fn_, _d)
+        ll_(' {} <<<<<<<'.format(dn))
+
+
+def main():
+    import argparse
+    import yaml
+
+    def expl(args):
+        if args.opt == 'obs':
+            yf = '/home/clin/wks/climi/climi/api/cfg_hwmi_eobs.yml'
+        elif args.opt == 'cmip5':
+            yf = '/home/clin/wks/climi/climi/api/cfg_hwmi_cmip.yml'
+        elif args.opt == 'cordex':
+            yf = '/home/clin/wks/climi/climi/api/cfg_hwmi_cordex.yml'
+        elif args.opt == 'other':
+            yf = '/home/clin/wks/climi/climi/api/cfg_hwmi_other.yml'
+        else:
+            raise Exception(f"{args.opt!r} is unknown as 'proj'")
+        os.system(f'less {yf!r}')
+
+    @timerMain_
+    def calc(args):
+        with open(args.controlfile, 'r') as ymlfile:
+            cfg = yaml.safe_load(ymlfile)
+        nlog = len(schF_keys_('', args.log, ext='.log'))
+        logging.basicConfig(filename= args.log + '_'*nlog + '.log',
+                            filemode='w',
+                            level=eval('logging.' + cfg['dbgl']))
+        if cfg['proj'] == 'obs':
+            rrrr__ = hwmi_obs_
+        elif cfg['proj'][:5] == 'cmip5':
+            rrrr__ = hwmi_cmip5_
+        elif cfg['proj'][:6] == 'cordex':
+            rrrr__ = hwmi_cordex_
+        elif cfg['proj'] == 'other':
+            rrrr__ = hwmi_other_
+        else:
+            raise Exception("{!r} is unknown as 'proj'".format(cfg['proj']))
+        rrrr__(cfg)
+
+    parser = argparse.ArgumentParser(
+            'BiH',
+            description='Calculate hwmi(d) based on data set on BI.nsc.liu.se'
+            )
+    subparsers = parser.add_subparsers(                                         
+            title='subcommands',                                                
+            description='valid subcommands',                                    
+            help='additional help')                                             
+    parser_expl = subparsers.add_parser(
+            'expl',
+            description='show controlfile examples'
+            )                                 
+    parser_calc = subparsers.add_parser(
+            'calc',
+            description='calculate HWMId/HWMI [& even WSDI]'
+            )                                 
+                                                                                
+    parser_expl.add_argument("opt",                                            # expl
+            type=str,                                                           
+            help="options for controlfile examples: "                                  
+                 "obs | cmip5 | cordex | other")                  
+    parser_expl.set_defaults(func=expl) 
+
+    parser_calc.add_argument("controlfile", type=str,                          # calc
+                             help="yaml file with metadata")
+    parser_calc.add_argument("-l", "--log", type=str, help="logfile")
+    parser_calc.set_defaults(func=calc) 
+    args = parser.parse_args()
+    args.func(args)
+
+if __name__ == '__main__':
+    main()

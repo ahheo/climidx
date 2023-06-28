@@ -1,0 +1,68 @@
+experiment: hc
+
+proj: cmip5
+_d: True
+_sdi: True
+hORc: heat
+
+ehr: rcp85
+#idir: /nobackup/rossby22/sm_chali/DATA/CMIP5
+rdir0: /nobackup/rossby22/sm_chali/DATA/hw2018/iii/cmip5/hist/
+ddir0: /nobackup/rossby22/sm_chali/DATA/hw2018/iii/cmip5/rcp85/
+ldir: /nobackup/rossby22/sm_chali/DATA/fx/
+
+#1st loop on gcms
+gcms: ['ACCESS1-3', 'bcc-csm1-1', 'bcc-csm1-1-m',
+       'BNU-ESM', 'CanESM2', 'CNRM-CM5',
+       'EC-EARTH', 'GFDL-ESM2M', 'HadGEM2-ES',
+       'IPSL-CM5A-MR', 'IPSL-CM5B-LR', 'MIROC5',
+       'MIROC-ESM-CHEM', 'MPI-ESM-LR', 'NorESM1-M']
+
+rip:
+  EC-EARTH: r12i1p1
+
+f_opts:
+  var: tasmin
+  freq: day
+
+#2nd loop on regions
+regions:
+  - ALL # [SWE, NSWE, SSWE, EU, GLOBAL]
+sub_r:
+  SWE:
+    longitude: [10.0, 23.0]
+    latitude: [55.0, 69.0]
+  EUR:
+    longitude: [-15.0, 60.0]
+    latitude: [35.0, 72.0]
+
+#3rd loop on periods
+periods:
+  - rcp # [hist, rcp]
+p_:
+  ref: [1981, 2010]
+  hist: [1951, 2005]
+  rcp: [2006, 2100]
+
+#season
+season: ndjf
+
+#output
+root: /nobackup/rossby22/sm_chali/DATA/
+
+#subH_() option
+minL: 3
+
+#data4kde_() option
+data4kde_mtd: 'ymax'
+
+#thr_() option
+thr_pctl: 90
+
+#kde_ option
+kde_opts:
+  bw: silverman
+  gridsize: 512
+
+#logging option
+dbgl: INFO #DEBUG #level for logging

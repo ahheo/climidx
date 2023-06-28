@@ -1,0 +1,502 @@
+#!/usr/bin/env python3
+
+import os
+import warnings
+import argparse
+import yaml
+import logging
+import iris
+
+from climi.uuuu import (pure_fn_, schF_keys_, timerMain_,                      # ffff
+                        intersection_, extract_period_cube)                    # cccc
+
+from climidx.exe_ import _CLIMIDX
+from climidx.diction_ import i__
+
+
+_here_ = os.path.dirname(__file__)
+
+_opj = os.path.join
+_isf =os.path.isfile
+
+
+def _path2norcp_info(fn):
+    terms = [i for i in fn.split('/') if i != '']
+    if terms[-1] in ['fx', '3hr', '6hr', 'day']:
+        freq = terms[-1]
+        tmp = terms[-2]
+    else:
+        freq = None
+        tmp = terms[-1]
+    if 'ECE' in tmp:
+        gcm = 'ICHEC-EC-EARTH'
+        rip = 'r12i1p1'
+    elif 'GFDL' in tmp:
+        gcm = 'GFDL-CM3'
+        rip = 'r1i1p1'
+    elif 'ERAI' in tmp:
+        gcm = 'ECMWF-ERAINT'
+        rip = 'r1i1p1'
+    if 'AROME' in tmp:
+        rcm = 'HCLIMcom-HCLIM38-AROME'
+        ver = 'x2yn2v1'
+    else:
+        rcm = 'HCLIMcom-HCLIM38-ALADIN'
+        ver = 'v1'
+    if 'RCP' in tmp:
+        rcp = re.findall('(?<=\_)RCP\d*(?=\_)', tmp)[0].lower()
+    elif 'ERAI' in tmp:
+        rcp = 'evaluation'
+    else:
+        rcp = 'historical'
+    prd = re.findall('(?<=\_)\d+_\d+', tmp)[0].replace('_', '-')
+    o = {'rcm': rcm, 'ver': ver, 'gcm': gcm,
+         'rip': rip, 'rcp': rcp, 'prd': prd}
+    if freq:
+        o.update({'freq': freq})
+    return o
+
+
+def _path2cmip6_info(fn):
+    terms = [i for i in fn.split('/') if i != '']
+    if re.fullmatch('r\d+i\d+p\d+f\d+', terms[-1]):
+        gcm, rcp, rip = terms[-3:]
+        return {'gcm': gcm, 'rcp': rcp, 'rip': rip}
+    else:
+        gcm, rcp, rip = terms[-4:-1]
+        freq = terms[-1][-3:] if len(terms[-1]) > 3 else terms[-1]
+        return {'gcm': gcm, 'rcp': rcp, 'rip': rip, 'freq': freq}
+
+
+def _path2cmip5_info(fn):
+    terms = [i for i in fn.split('/') if i != '']
+    if terms[-1] in ['fx', 'fx_i', '1hr', '3hr', '6hr', 'day', 'mon', 'mon_i',
+                     'sem', 'sem_i']:
+        gcm, rcp, rip = terms[-5:-2]
+        freq = terms[-1]
+        return {'gcm': gcm, 'rcp': rcp, 'rip': rip, 'freq': freq}
+    else:
+        gcm, rcp, rip = terms[-4:-1]
+        return {'gcm': gcm, 'rcp': rcp, 'rip': rip}
+
+
+def _path2cordex_info(fn):
+    terms = [i for i in fn.split('/') if i != '']
+    if terms[-1] in ['fx', 'fx_i', '1hr', '3hr', '6hr', 'day', 'mon', 'mon_i',
+                     'sem', 'sem_i']:
+        rcm, ver, gcm, rip, rcp = terms[-7:-2]
+        freq = terms[-1]
+        return {'rcm': rcm, 'ver': ver, 'gcm': gcm,
+                'rip': rip, 'rcp': rcp, 'freq': freq}
+    else:
+        rcm, ver, gcm, rip, rcp = terms[-6:-1]
+        return {'rcm': rcm, 'ver': ver, 'gcm': gcm,
+                'rip': rip, 'rcp': rcp}
+
+
+def _gg(folder='cordex'):
+    if folder == 'cmip5':
+        yf = _opj(_here_, 'gcm_gwls_.yml')
+    elif folder == 'cordex':
+        yf = _opj(_here_, 'gcm_gwls.yml')
+    else:
+        wmsg = "unknown folder: {!r}, output None!"
+        warnings.warn(wmsg.format(folder))
+        return None
+        #raise Exception("unknown folder: {!r}".format(folder))
+    with open(yf, 'r') as ymlfile:
+        gg = yaml.safe_load(ymlfile)
+    return gg
+
+
+def _pp(yf0):
+    with open(yf0, 'r') as ymlfile:
+        pp = yaml.safe_load(ymlfile)
+    return pp
+
+
+def _yy_dn(pD, dn, gwl, gg, curr):
+    if gwl[:3] == 'gwl' and gg is not None:
+        try:
+            y0 = gg[gwl][pD['rcp']][pD['gcm']][pD['rip']]
+            y0y1 = [y0, y0 + 29]
+        except KeyError:
+            y0y1 = None
+    elif gwl == 'current' and pD['rcp'] == 'rcp85':
+        y0y1 = curr
+        dn = dn.replace('rcp85', 'historical')
+    elif '-' in gwl:
+        def _int(s):
+            tmp = int(s)
+            tmp_ = 0 if tmp > 100 else (1900 if tmp > 50 else 2000)
+            return tmp + tmp_
+        y0y1 = list(map(_int, gwl.split('-')))
+    else:
+        y0y1 = None
+    return (y0y1, dn)
+
+
+def _dn(*terms):
+    return '_'.join(i for i in terms if i)
+
+
+class ModelCI_(_CLIMIDX):
+                #oDir,                                                         # dg[p]ic_ in _exe
+                #user_cfg=None,                                                # dgpi[c]_ in _exe
+                #folder='cordex', regD=None, varD=None,                        # inDF
+                #idxD=None, iL=[], gMthd=None, vnX=9
+    def dgyit_(self,
+               ti_, p_, pRoot_,
+               gwl='', curr=[1971, 2000], regN=None, y0y1=None):
+        p_info_ = eval("_path2{}_info".format(self.folder))
+        tmp = p_info_(p_)
+        if self.folder == 'cordex':
+            dn = _dn(tmp['gcm'], tmp['rcp'], tmp['rip'],
+                     tmp['rcm'], tmp['ver'],
+                     regN)
+        elif self.folder == 'norcp':
+            dn = _dn(tmp['gcm'], tmp['rcp'], tmp['rip'],
+                     tmp['rcm'], tmp['ver'], tmp['prd'],
+                     regN)
+        elif self.folder[:4] == 'cmip':
+            dn = _dn(mp['gcm'], tmp['rcp'], tmp['rip'], regN)
+        yy, dn = _yy_dn(tmp, dn, gwl, _gg(self.folder), curr)
+        self.DSnm = dn
+        self.GWL = gwl
+        self.y0y1 = y0y1 if y0y1 else yy
+        pi1 = _opj(pRoot, p_)
+        if gwl == 'current' or gwl[:3] == 'gwl' and y0y1 is not None:
+            pi1 = _opj(pRoot, p_)
+            pi0 = pi1.replace(tmp['rcp'], 'historical')
+            self.iDir = (pi0 if y0y1[1] <= 2005 else
+                         (pi1 if y0y1[0] > 2005 else [pi0, pi1]))
+        else:
+            self.iDir = _opj(pRoot, p_)
+        self.tInt = ti_
+
+
+class SMHI_EUR_CI_(_CLIMIDX):
+    def dgyit_(self, ti_, p_, pp,
+               gwl='', curr=[1971, 2000], regN=None, y0y1=None):
+        if gwl:
+            pi0, pi1 = p_[0], p_[1]
+            tmp = pp[pi1]
+        else:
+            tmp = pp[p_]
+        dn = _dn(tmp['gcm'], tmp['rcp'], tmp['rip'],
+                 tmp['rcm'], tmp['ver'],
+                 regN)
+        yy, dn = _yy_dn(tmp, dn, gwl, _gg(), curr)
+        self.DSnm = dn
+        self.GWL = gwl
+        self.y0y1 = y0y1 if y0y1 else None
+        if gwl and y0y1 is not None:
+            pi0_, pi1_ = (_opj(pp['root'], '{}'.format(pi0), 'netcdf'),
+                          _opj(pp['root'], '{}'.format(pi1), 'netcdf'))
+            self.iDir = (pi0_ if y0y1[1] <= 2005 else
+                         (pi1_ if y0y1[0] > 2005 else [pi0_, pi1_]))
+        else:
+            self.iDir = _opj(pp['root'], '{}'.format(p_), 'netcdf')
+        self.tInt = ti_
+
+
+class ERAI_CI_(_CLIMIDX):
+    def dgyit_(self, ti_, regN=None, y0y1=None):
+        self.iDir = '/home/rossby/imports/obs/ECMWF/ERAINT/input/'
+        self.DSnm = _dn('ERAI', regN)
+        self.GWL = ''
+        self.y0y1 = y0y1
+        self.tInt = ti_
+
+
+class EOBS_CI_(_CLIMIDX):
+    def dgyit_(self, ti_, regN=None, y0y1=None):
+        self.iDir = '/nobackup/rossby22/sm_chali/DATA/hw2018/iii/obs/EOBS20/'
+        self.DSnm = _dn('EOBS20', regN)
+        self.GWL = ''
+        self.y0y1 = y0y1
+        self.tInt = ti_
+
+    def cccc_(self):
+        vo = {'c_pr': ('rr', 1. / 3600 / 24, 'kg m-2 s-1'),
+              'c_tas': ('tg', None, 'K'),
+              'c_tasmax': ('tx', None, 'K'),
+              'c_tasmin': ('tn', None, 'K'),
+              'c_rsds': ('qq', 1, 'K'),
+              }
+        def _eobs_load(var):
+            o = iris.load_cube(_opj(idir,
+                '{}_ens_mean_0.1deg_reg_v20.0e.nc'.format(vo[var][0])))
+            if reg_d is not None:
+                o = intersection_(o, **reg_d)
+            if vo[var][1] is None and vo[var][2]:
+                o.convert_units(vo[var][2])
+            elif vo[var][1] == 1 and vo[var][2]:
+                o.units = vo[var][2]
+            elif vo[var][2]:
+                o *= vo[var][1]
+                o.units = vo[var][2]
+            return (o if self.y0y1 is None else
+                    extract_period_cube(o, *self.y0y1))
+        tmp = self._idxL(self.tInt)
+        if tmp:
+            vD = tmp[0]
+            ccc = dict()
+            for i in vD[1].keys():
+                if i in vo.keys():
+                    o = _eobs_load(i)
+                    ccc.update({i: o})
+            return ccc
+
+
+def main():
+    def prnt(args):
+        if args.opt:
+            if args.opt in i__.keys():
+                tags = ("#",
+                        "tInt_i",
+                        "VARIABLES",
+                        "FUNCTION",
+                        "tInt_o",
+                        "EXE",
+                        "METADATA",
+                        "GROUPS")
+                for a, b in zip(tags, i__[args.opt]):
+                    print('{}:'.format(a), b)
+            elif args.opt[:4] == 'grp_':
+                il_ = [i for i in i__.keys()
+                       if all(ii in i__[i][7] for ii in args.opt[4:])]
+                print(', '.join(il_))
+        else:
+            print(', '.join(i__.keys()))
+
+    @timerMain_
+    def calc(args):
+        xi_ = args.indices                                                     # il_
+        if xi_:
+            if _isf(xi_):                                                      #   fr file
+                with open(xi_, 'r') as yf:
+                    il_ = yaml.safe_load(yf)                                   #   fr group
+            elif xi_[:4] == 'grp_':
+                il_ = [i for i in i__.keys()
+                       if all(ii in i__[i][6] for ii in xi_[4:])]
+            else:                                                              #   fr command line
+                il_ = xi_.split(',')
+        else:                                                                  #   all in idxD (index diction)
+            il_ = list(i__.keys())                                             #   indices to be excluded
+        if args.indices_excl:
+            el_ = args.indices_excl.split(',')
+            for i in el_:
+                il_.remove(i)
+        user_cfg=None                                                          # user_cfg defintion of var and tInt_o and others
+        if args.user_cfg:                                                      #   with whole path or pwd
+            if _isf(args.user_cfg):
+                with open(args.user_cfg, 'r') as yf:
+                    user_cfg = yaml.safe_load(yf)
+            elif _isf(_opj(_here_, args.user_cfg)):                            #   here alongside this script
+                with open(_opj(_here_, args.user_cfg), 'r') as yf:
+                    user_cfg = yaml.safe_load(yf)
+        if args.lll:                                                           # regD
+            lo0, lo1, la0, la1 = [float(i) for i in args.lll.split(',')]
+            reg_d = {'longitude': [lo0, lo1], 'latitude': [la0, la1]}
+        else:
+            reg_d = None
+        reg_n = (args.domain if args.domain else                               # regN
+                 ('LLL' if reg_d is not None else ''))
+        if args.odir:
+            odir = args.odir
+        else:
+            odir = '.'
+        tis = ['mon', 'day'] if args.tint is None else args.tint.split(',')    # ti_
+        path_cfg = args.path_cfg                                               # path_cfg
+        sssp, eeep, idxp = args.start, args.end, args.idxp                     # sssp, eeep, idxp
+        gMthd, vnX = args.g_mthd, args.vnx                                     # gMthd, vnX
+        gwl = args.gwl                                                         # gwl
+        if args.y0y1:                                                          # y0y1
+            y0y1 = [int(i) for i in args.y0y1.split('-')]
+        else:
+            y0y1 = None
+        opt = args.opt                                                         # opt
+
+
+        warnings.filterwarnings("ignore", category=UserWarning)
+        logn = [opt]
+        if gwl:
+            logn.append(gwl)
+        if args.log:
+            logn.append(args.log)
+        logn = '-'.join(logn)
+        nlog = len(find_patt_(r'^{}_*'.format(logn),
+                              pure_fn_(schF_keys_('', logn, ext='.log'))))
+        logging.basicConfig(filename=logn + '_'*nlog + '.log',
+                            filemode='w',
+                            level=logging.INFO)
+
+        if 'cmp5' in opt or 'era' in opt:
+            flder = 'cmip5'
+            if gwl:
+                pathfn = 'cmip5_import.yml'
+            else:
+                pathfn = 'cmip5_import_.yml'
+        elif 'cmp6' in opt:
+            flder = 'cmip6'
+            pathfn = 'cmip6_smhi_len.yml'
+        elif 'norcp' in opt:
+            flder = 'norcp'
+            pathfn = 'norcp_.yml'
+        else:
+            flder = 'cordex'
+            if 'smhi' in opt:
+                pathfn = 'eur-11_smhi-rca4.yml'
+            elif 'eval' in opt:
+                pathfn = 'eur-11_import_eval.yml'
+            elif gwl:
+                pathfn = 'eur-11_import.yml'
+            else:
+                pathfn = 'eur-11_import__.yml'
+
+        e_kwargs = dict(user_cfg=user_cfg, regD=reg_d, iL=il_, folder=flder,
+                        gMthd=gMthd, vnX=vnX)
+        ed_kwargs = dict(regN=reg_n, y0y1=y0y1)
+
+        def _ssseeeiii(x):
+            return (l_ind_(x, [int(i) for i in idxp.split(',')]) if idxp
+                    else x[sssp:eeep])
+
+        if opt == 'eobs':
+            EXE_ = EOBS_CI_(odir, **e_kwargs)
+            for ti_ in tis:
+                EXE_.dgyit_(ti_, **ed_kwargs)
+                ccc = EXE_.cccc_()
+                EXE_(ccc=ccc)
+        elif opt == 'erai':
+            EXE_ = ERAI_CI_(odir, **e_kwargs)
+            for ti_ in tis:
+                EXE_.dgyit_(ti_, **ed_kwargs)
+                EXE_()
+        else:
+            ed_kwargs.update(dict(gwl=gwl))
+            pp = _pp(path_cfg) if path_cfg else _pp(_opj(_here_, pathfn))
+            if 'smhi' in opt:
+                EXE_ = SMHI_EUR_CI_(odir, **e_kwargs)
+                if 'eval' in opt:
+                    p_s = (str(pp['eval']),)
+                elif gwl:
+                    p_s = _ssseeeiii(pp['rcps'])
+                else:
+                    p_s = _ssseeeiii(pp['h248'])
+                for p_ in p_s:
+                    for ti_ in tis:
+                        EXE_.dgyit_(ti_, p_, pp, **ed_kwargs)
+                        EXE_()
+            else:
+                EXE_ = ModelCI_(odir, **e_kwargs)
+                p_s = _ssseeeiii(pp['p_'])
+                for p_ in p_s:
+                    for ti_ in tis:
+                        EXE_.dgyit_(ti_, p_, pp['root'], **ed_kwargs)
+                        EXE_()
+
+    parser = argparse.ArgumentParser(
+            'BiC',
+            description='Calcualte climate indices '
+                        'based on data set on BI.nsc.liu.se'
+            )
+    subparsers = parser.add_subparsers(
+            title='subcommands',
+            description='valid subcommands',
+            help='additional help')
+    parser_calc = subparsers.add_parser(
+            'calc',
+            description='Calculator'
+            )
+    parser_prnt = subparsers.add_parser(
+            'prnt',
+            description='Information printer'
+            )
+
+    parser_prnt.add_argument("opt",                                            # prnt
+            type=str,
+            nargs='?',
+            help="options for print content: "
+                 "None->list all available Indices | "
+                 "INDEX->definition of INDEX | "
+                 "grp_X[Y...]->list Indices in group X[Y...]")
+
+    parser_prnt.set_defaults(func=prnt)
+
+    parser_calc.add_argument("opt",                                            # calc
+            type=str,
+            help="options for dataset on BI: "
+                 "eobs | "
+                 "erai | "
+                 "cdx_eval; cdx_eval_smhi | "
+                 "cdx; cdx_smhi | "
+                 "norcp | cmp5 | cmp6")
+    parser_calc.add_argument("-x", "--indices",
+            type=str,
+            help="indices to be calculated. Formats: "
+                 "file name (yaml): read list from yaml file | "
+                 "indexA,indexB,indexC (no space after comma) | "
+                 "grp_a[bc]: indices belong to a [and b and c] "
+                 "currently available group labels: "
+                 "w | t | p | r | c")
+    parser_calc.add_argument("-X", "--indices_excl",
+            type=str,
+            help="indices to not be calculated. Format: "
+                 "indexA,indexB,indexC (no space after comma)")
+    parser_calc.add_argument("-w", "--gwl",
+            type=str,
+            help="warming levels: "
+                 "current | gwl15 | gwl2 | gwl25 | gwl3 | gwl35 | "
+                 "gwl4 | xx-xx | xxxx-xxxx")
+    parser_calc.add_argument("-s", "--start",
+            type=int,
+            help="simulation-loop start.")
+    parser_calc.add_argument("-e", "--end",
+            type=int,
+            help="simulation-loop end")
+    parser_calc.add_argument("-i", "--idxp",
+            type=str,
+            help="simulation-loop index. expl: 0,1,3 "
+                 "meaning simulation #1,2,4 in the lists "
+                 "(specified in a yaml file) to be calculated")
+    parser_calc.add_argument("-u", "--user_cfg",
+            type=str,
+            help="yaml file that stores user configuration")
+    parser_calc.add_argument("-p", "--path_cfg",
+            type=str,
+            help="yaml file that stores paths (simulations)")
+    parser_calc.add_argument("-t", "--tint",
+            type=str,
+            help="temporal resolution(s) of input data: mon,day")
+    parser_calc.add_argument("--y0y1",
+            type=str,
+            help="only for period: y0-y1")
+    parser_calc.add_argument("--lll",
+            type=str,
+            help="longitude/latitude limits: lo0,lo1,la0,la1")
+    parser_calc.add_argument("-d", "--domain",
+            type=str,
+            help="name of domain")
+    parser_calc.add_argument("-o", "--odir",
+            type=str,
+            help="directory where the results to be stored!")
+    parser_calc.add_argument("-g", "--g_mthd",
+            type=str,
+            help="method for grouping indices for a single call: "
+                 "None (default) | 'v' | 'i'")
+    parser_calc.add_argument("-n", "--vnx",
+            type=int,
+            default=9,
+            help="maximum number of variables: "
+                 "maximum input variables for a single call")
+    parser_calc.add_argument("-l", "--log",
+            type=str,
+            help="exclusive log identifier")
+    parser_calc.set_defaults(func=calc)
+    args = parser.parse_args()
+    args.func(args)
+
+if __name__ == '__main__':
+    main()

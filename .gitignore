@@ -1,0 +1,14 @@
+*.out
+*.old
+*~
+*.pyc
+*.log
+*.#
+*.swp
+*.nc
+*.nc4
+*.hdf
+*.p
+*.tmp
+*.egg-info
+tmp/*
