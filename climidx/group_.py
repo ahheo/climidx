@@ -1,6 +1,6 @@
 import os
 
-from climi.uuuu import ouniqL_, ss_fr_sl_, nli_, flt_l
+from uuuu import ouniqL_, ss_fr_sl_, nli_, flt_l
 
 from .diction_ import i__
 

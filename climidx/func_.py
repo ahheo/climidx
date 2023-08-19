@@ -58,7 +58,11 @@
 import numpy as np
 import dask.array as da
 import iris
-from climi.uuuu import *
+from iris.cube import Cube as _Cube  
+from uuuu import (
+        consecutive_, rMEAN1d_,                                                #ffff
+        pSTAT_cube, extract_byAxes_, rm_t_aux_cube, pst_                       #cccc 
+        )
 
 
 __all__ = ['mEffPr_',
@@ -106,7 +110,8 @@ __all__ = ['mEffPr_',
            'dColdPRRNdays_',
            'dWarmPRSNdays_',
            'dColdRainWarmSnowDays_',
-           'ws_cube']
+           'ws_cube',
+           'extract_season_cube']
 
 
 K0 = 273.15
@@ -124,7 +129,7 @@ ws_cube = iris.analysis.maths.IFunc(ws_data_func, ws_units_func)
 
 
 def _rl(x):
-    return x.data if isinstance(x, iris.cube.Cube) else x
+    return x.data if isinstance(x, _Cube) else x
 
 
 def mEffPr_(cPr, cET, freq):
@@ -500,7 +505,7 @@ def dDegDay_(cT, freq, thr=0., left=False):
     lg_ = 'lt' if left else 'gt'
     vn_ = 'dd_{:g}' if left else 'dd{:g}_'
     pst_(c, 'degree day {}{:g}'.format(lg_, thr),
-        var_name=vn_.format(thr))
+         var_name=vn_.format(thr))
     return c
 
 

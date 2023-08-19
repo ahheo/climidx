@@ -2,7 +2,7 @@ import numpy as np
 import iris
 from abc import abstractmethod
 
-from climi.uuuu import (
+from uuuu import (
         isIter_, isMyIter_, isMonth_, ismono_, isSeason_, ll_, l__, mmmN_,     #ffff
         prg_,                                                                  #ffff
         pSTAT_cube, axT_cube, seasonyr_cube, initAnnualCube_, nTslice_cube,    #cccc

@@ -4,7 +4,7 @@ import iris.coord_categorisation as ica
 import glob
 import os
 
-from climi.uuuu import (
+from uuuu import (
         isIter_, ll_, l__, ouniqL_, pure_fn_, p_deoverlap_, p_least_,          #ffff
         schF_keys_,                                                            #ffff
         concat_cube_, pSTAT_cube, extract_byAxes_, cubesv_                     #cccc

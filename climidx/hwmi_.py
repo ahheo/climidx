@@ -21,8 +21,8 @@ import numpy as np
 import iris
 #import math
 
-from climi.uuuu import (l__, ll_,                                              # ffff
-                        ax_fn_mp_, initAnnualCube_, rm_t_aux_cube)             # cccc
+from uuuu import (l__, ll_,                                                    # ffff
+                  ax_fn_mp_, initAnnualCube_, rm_t_aux_cube)                   # cccc
 
 from .zzzz_ import *
 

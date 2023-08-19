@@ -39,10 +39,10 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import List
 
-from climi.uuuu import (aggr_func_, ind_inRange_, ind_s_, ind_win_, kde_,      # ffff
-                        l__, ll_, nanMask_,                                    # ffff 
-                        ax_fn_mp_, extract_byAxes_, rm_t_aux_cube              # cccc
-                        )
+from uuuu import (aggr_func_, ind_inRange_, ind_s_, ind_win_, kde_,            # ffff
+                  l__, ll_, nanMask_,                                          # ffff 
+                  ax_fn_mp_, extract_byAxes_, rm_t_aux_cube                    # cccc
+                  )
 
 __all__ = ['p25_75_', 'md_', 'tE', 'tE_', 'thr_', 'dt_thr_', 'subH', 'subH_',
            'get_t_period_', 'init_c_thr_', 'get_thr_', 'data4kde_',

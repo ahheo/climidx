@@ -19,8 +19,8 @@ Date last modified: 11.06.2020
 import numpy as np
 import iris
 
-from climi.uuuu import (l__, ll_,                                              # ffff
-                        ax_fn_mp_, initAnnualCube_, rm_t_aux_cube)             # cccc
+from uuuu import (l__, ll_,                                                    # ffff
+                  ax_fn_mp_, initAnnualCube_, rm_t_aux_cube)                   # cccc
 
 from .zzzz_ import *
 
