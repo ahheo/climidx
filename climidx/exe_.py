@@ -105,8 +105,9 @@ def _exe(idxD,                                                                 #
     def _d0(i_, cL_, freq=None, _nm=None):
         freq = freq if freq else _get_freq(idxD, i_, dgpic_[4])
         t000 = l__('{} {}'.format(idxD[i_][0], i_))
-        o = pSTAT_cube(cL_[0], idxD[i_][3] if idxD[i_][3] else 'MEAN',
-                       *freq)
+        o = pSTAT_cube(cL_[0], *freq,
+                       stat=idxD[i_][3] if idxD[i_][3] else 'MEAN',
+                       )
         _SV(idxD, i_, o, dgpic_, freq=freq, _nm=_nm)                           # _SV(idxD_, i_, o, dgpic_, freq=None, _nm=None)
         ll_(i_, t000)
 

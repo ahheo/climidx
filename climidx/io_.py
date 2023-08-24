@@ -296,9 +296,9 @@ def _xxx(cube, tInt0, tInt1):
     if tInts.index(tInt1) > tInts.index(tInt0):
         raise ValueError("cannot convert from low to high tIntuency!")
     if tInt1 == 'mon':
-        return pSTAT_cube(cube, 'MEAN', 'month')
+        return pSTAT_cube(cube, 'month')
     elif tInt1 == 'day':
-        return pSTAT_cube(cube, 'MEAN', 'day')
+        return pSTAT_cube(cube, 'day')
     elif tInt1 == '6hr':
         if cube.cell_methods and cube.cell_methods[0].method.upper() == 'MEAN':
             return _to_xhr(cube)
