@@ -7,8 +7,10 @@ import yaml
 import logging
 import iris
 
-from climi.uuuu import (pure_fn_, schF_keys_, timerMain_,                      # ffff
-                        intersection_, extract_period_cube)                    # cccc
+from uuuu import (
+        pure_fn_, schF_keys_, timerMain_,                                      # ffff
+        intersection_, extract_period_cube,                                    # cccc
+        )
 
 from climidx.exe_ import _CLIMIDX
 from climidx.diction_ import i__

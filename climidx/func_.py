@@ -61,7 +61,7 @@ import iris
 from iris.cube import Cube as _Cube
 from uuuu import (
         consecutive_, rMEAN1d_,                                                #ffff
-        pSTAT_cube, extract_byAxes_, rm_t_aux_cube, pst_                       #cccc
+        pSTAT_cube, extract_byAxes_, extract_season_cube, rm_t_aux_cube, pst_, #cccc
         )
 
 

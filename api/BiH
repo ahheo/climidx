@@ -29,12 +29,12 @@ import yaml
 import argparse
 from typing import Hashable
 
-from climi.uuuu import (isGI_, l__, ll_, ouniqL_, p_deoverlap_,                # ffff
-                        p_least_, pure_fn_, rPeriod_, schF_keys_, slctStrL_,   # ffff 
-                        timerMain_,                                            # ffff 
-                        concat_cube_, extract_season_cube, intersection_,      # cccc
-                        maskLS_cube, purefy_cubeL_, seasonyr_cube, yr_doy_cube # cccc
-                        )
+from uuuu import (
+        isGI_, l__, ll_, ouniqL_, p_deoverlap_, p_least_, pure_fn_, rPeriod_,  # ffff
+        schF_keys_, slctStrL_, timerMain_,                                     # ffff 
+        concat_cube_, extract_season_cube, intersection_, maskLS_cube,         # cccc
+        purefy_cubeL_, seasonyr_cube, yr_doy_cube,                             # cccc
+        )
 
 from climidx.hwmi_ import hwmi__
 from climidx.hwmid_ import hwmid__
