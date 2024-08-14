@@ -5,7 +5,7 @@ from abc import abstractmethod
 from uuuu import (
         isIter_, isMyIter_, isMonth_, ismono_, isSeason_, ll_, l__, mmmN_,     #ffff
         prg_,                                                                  #ffff
-        pSTAT_cube, axT_cube, seasonyr_cube, initAnnualCube_, nTslice_cube,    #cccc
+        pSTAT_cube, axT_, seasonyr_cube, initAnnualCube_, nTslice_cube,        #cccc
         concat_cube_, yr_doy_cube, ax_fn_mp_                                   #cccc
         )
 
@@ -25,7 +25,7 @@ def _tt(cube, y0y1=None, mmm=None):
         yrs = cube.coord('year').points
         y_y_ = y0y1 if y0y1 else yrs[[0, -1]]
     doy = cube.coord('doy').points
-    return (axT_cube(cube), y_y_, yrs, doy)
+    return (axT_(cube), y_y_, yrs, doy)
 
 
 def _szG(cL):
